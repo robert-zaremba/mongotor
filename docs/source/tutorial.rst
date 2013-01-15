@@ -16,7 +16,7 @@ Getting started
     localhost.
 
 
-Defining our Collection 
+Defining our Collection
 =======================
 
 A `MongoDB Collection <http://www.mongodb.org/display/DOCS/Collections>`_
@@ -31,7 +31,7 @@ with the required :py:mod:`~mongotor.orm.field` (s) ::
 
     class User(Collection):
         __collection__ = "user"
-        
+
         _id = ObjectIdField()
         name = StringField()
         active = BooleanField()
@@ -88,7 +88,7 @@ Using ORM in a TornadoHandler
     # A connection to the MongoDB database needs to be established before perform operations
     # A connection is stabilished using a Databse object
     Database.connect(['localhost:27017'], 'asyncmongo_test')
-    
+
     class User(Collection):
 
         __collection__ = "user"
@@ -137,7 +137,7 @@ Using Client in a TornadoHandler
 
 MongoTor supports :py:class:`~mongotor.client.Client` for direct access to mongo, without orm layer
 
-:: 
+::
 
     from mongotor.database import Database
     from bson import ObjectId
@@ -151,9 +151,9 @@ MongoTor supports :py:class:`~mongotor.client.Client` for direct access to mongo
         @web.asynchronous
         @gen.engine
         def get(self):
-            user = {'_id': ObjectId, 'name': 'User Name'}
+            user = {'_id': ObjectId(), 'name': 'User Name'}
             yield gen.Task(self.db.user.insert, user)
-            
+
             yield gen.Task(self.db.user.update, user['_id'], {"$set": {'name': 'New User Name'}})
 
             user_found = yield gen.Task(self.db.user.find_one, user['_id'])
@@ -164,7 +164,7 @@ MongoTor supports :py:class:`~mongotor.client.Client` for direct access to mongo
 Using Signals
 =============
 
-MongoTor supports :py:mod:`~mongotor.orm.signals` for pre_save, post_save, 
+MongoTor supports :py:mod:`~mongotor.orm.signals` for pre_save, post_save,
 pre_remove, post_remove, pre_update, post_update to which receivers could bind to.
 
 ::
