@@ -30,3 +30,6 @@ data
 
 #PyCharm
 .idea/
+
+#rope
+.ropeproject
