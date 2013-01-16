@@ -90,8 +90,8 @@ class Cursor(object):
 
             connection.send_message(message.kill_cursors([cursor_id]), callback=None)
 
-        if self._limit == -1 and len(response['data']) == 1:
-            callback((response['data'][0], None))
+        if self._limit == -1:
+            callback((response['data'][0] if len(response['data']) == 1 else None, None))
         else:
             callback((response['data'], None))
 
@@ -101,10 +101,8 @@ class Cursor(object):
 
         Returns the number of documents in the results set for this query. Does
         """
-        command = {"query": self._spec}
-
         response, error = yield gen.Task(self._database.command,
-            'count', self._collection, **command)
+            'count', self._collection, query=self._spec)
 
         total = 0
         if response and len(response) > 0 and 'n' in response:

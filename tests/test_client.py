@@ -155,6 +155,24 @@ class ClientTestCase(testing.AsyncTestCase):
         response['_id'].should.be(documents[2]['_id'])
         error.should.be.none
 
+    def test_find_one_non_existing_document(self):
+        """[ClientTestCase] - find one document which not exists"""
+        db = Database.connect(["localhost:27027", "localhost:27028"],
+            dbname='test')
+
+        documents = [{'_id': '1', 'param': 'shouldbeparam'},
+            {'_id': '2', 'param': 'shouldbeparam2'}]
+
+        db.collection_test.insert(documents, callback=self.stop)
+        response, error = self.wait()
+
+        db.collection_test.find_one('non_existing_id',
+            callback=self.stop)
+        response, error = self.wait()
+
+        response.should.be.none
+        error.should.be.none
+
     def test_count_documents_in_find(self):
         """[ClientTestCase] - counting documents in query"""
         db = Database.connect(["localhost:27027", "localhost:27028"],
