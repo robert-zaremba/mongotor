@@ -23,6 +23,7 @@ from bson import SON
 from mongotor.node import Node, ReadPreference
 from mongotor.errors import DatabaseError
 from mongotor.client import Client
+from cache import CacheMixin
 
 
 def connected(fn):
@@ -36,7 +37,7 @@ def connected(fn):
     return wrapped
 
 
-class Database(object):
+class Database(CacheMixin):
     """Database object
     """
     _instance = None
@@ -62,6 +63,7 @@ class Database(object):
         ioloop_is_running = IOLoop.instance().running()
         self._config_nodes(callback=partial(self._on_config_node, ioloop_is_running))
 
+        # TODO: this will block and eat you if you make DB connection after when IOLoop is running
         while True:
             if not ioloop_is_running:
                 IOLoop.instance().start()
@@ -175,7 +177,7 @@ class Database(object):
 
     @connected
     def command(self, command, value=1, read_preference=None,
-        callback=None, check=True, allowable_errors=[], **kwargs):
+        callback=None, check=True, allowable_errors=[], connection=None, **kwargs):
         """Issue a MongoDB command.
 
         Send command `command` to the database and return the
@@ -220,24 +222,14 @@ class Database(object):
         """
         if isinstance(command, basestring):
             command = SON([(command, value)])
-
         command.update(kwargs)
 
         if read_preference is None:
             read_preference = self._read_preference
 
-        self._command(command, read_preference=read_preference, callback=callback)
+        Client(self, '$cmd').find_one(command, is_command=True,
+            connection=connection, read_preference=read_preference, callback=callback)
 
-    def _command(self, command, read_preference=None,
-        connection=None, callback=None):
-
-        if read_preference is None:
-            read_preference = self._read_preference
-
-        client = Client(self, '$cmd')
-
-        client.find_one(command, is_command=True, connection=connection,
-            read_preference=read_preference, callback=callback)
 
     def __getattr__(self, name):
         """Get a client collection by name.
@@ -245,4 +237,7 @@ class Database(object):
         :Parameters:
           - `name`: the name of the collection
         """
-        return Client(self, name)
+        if name[0] != '_':
+            return Client(self, name)
+        else:
+            raise AttributeError("%s has no attribute %s" % (self, name))

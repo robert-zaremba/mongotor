@@ -57,7 +57,7 @@ class Node(object):
         response = None
         try:
             connection = Connection(host=self.host, port=self.port)
-            response, error = yield gen.Task(self.database._command, ismaster,
+            response, error = yield gen.Task(self.database.command, ismaster,
                 connection=connection)
             connection.close()
         except InterfaceError, ie:
