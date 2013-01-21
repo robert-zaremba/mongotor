@@ -97,3 +97,9 @@ def _fields_list_to_dict(fields):
                             "each an instance of %s" % (basestring.__name__,))
         as_dict[field] = 1
     return as_dict
+
+
+def _gen_index_name(keys):
+    """Generate an index name from the set of fields it is over.
+    """
+    return u"_".join([u"%s_%s" % item for item in keys])

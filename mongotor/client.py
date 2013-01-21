@@ -22,6 +22,8 @@ from mongotor.cursor import Cursor
 from mongotor import message
 from mongotor import helpers
 
+from pymongo.helpers import _index_list, _index_document
+
 log = logging.getLogger(__name__)
 
 
@@ -32,7 +34,6 @@ class Client(object):
         self._collection = collection
         self._collection_name = database.get_collection_name(collection)
 
-    @gen.engine
     def insert(self, doc_or_docs, safe=True, check_keys=True, callback=None):
         """Insert a document
 
@@ -50,21 +51,12 @@ class Client(object):
 
         assert isinstance(doc_or_docs, list)
 
-        message_insert = message.insert(self._collection_name, doc_or_docs,
-            check_keys, safe, {})
-
+        msg = message.insert(self._collection_name, doc_or_docs,
+                             check_keys, safe, {})
         log.debug("mongo: db.{0}.insert({1})".format(self._collection_name, doc_or_docs))
-
         node = self._database.get_node(ReadPreference.PRIMARY)
-        connection = yield gen.Task(node.connection)
+        node.connection(lambda conn: conn.send_message(msg, safe, False, callback))
 
-        response, error = yield gen.Task(connection.send_message,
-            message_insert, safe)
-
-        if callback:
-            callback((response, error))
-
-    @gen.engine
     def remove(self, spec_or_id={}, safe=True, callback=None):
         """remove a document
 
@@ -78,20 +70,12 @@ class Client(object):
 
         assert isinstance(spec_or_id, dict)
 
-        message_delete = message.delete(self._collection_name, spec_or_id,
-            safe, {})
-
+        msg = message.delete(self._collection_name, spec_or_id,
+                             safe, {})
         log.debug("mongo: db.{0}.remove({1})".format(self._collection_name, spec_or_id))
         node = self._database.get_node(ReadPreference.PRIMARY)
-        connection = yield gen.Task(node.connection)
+        node.connection(lambda conn: conn.send_message(msg, safe, False, callback))
 
-        response, error = yield gen.Task(connection.send_message,
-            message_delete, safe)
-
-        if callback:
-            callback((response, error))
-
-    @gen.engine
     def update(self, spec, document, upsert=False, safe=True,
         multi=False, callback=None):
         """Update a document(s) in this collection.
@@ -113,26 +97,20 @@ class Client(object):
             that you specify this argument explicitly for all update
             operations in order to prepare your code for that change.
         """
-        assert isinstance(spec, dict), "spec must be an instance of dict"
+        if not isinstance(spec, dict):
+            spec = {'_id': spec}
         assert isinstance(document, dict), "document must be an instance of dict"
         assert isinstance(upsert, bool), "upsert must be an instance of bool"
         assert isinstance(safe, bool), "safe must be an instance of bool"
 
-        message_update = message.update(self._collection_name, upsert,
-                multi, spec, document, safe, {})
-
+        msg = message.update(self._collection_name, upsert,
+                             multi, spec, document, safe, {})
         log.debug("mongo: db.{0}.update({1}, {2}, {3}, {4})".format(
             self._collection_name, spec, document, upsert, multi))
 
         node = self._database.get_node(ReadPreference.PRIMARY)
-        connection = yield gen.Task(node.connection)
+        node.connection(lambda conn: conn.send_message(msg, safe, False, callback))
 
-        response, error = yield gen.Task(connection.send_message,
-            message_update, safe)
-
-        callback((response, error))
-
-    @gen.engine
     def find_one(self, spec_or_id=None, **kwargs):
         """Get a single document from the database.
 
@@ -158,8 +136,12 @@ class Client(object):
     def find(self, *args, **kwargs):
         """Query the database.
 
+        Returns `Cursor` object unless callback is specified.
+        Otherwise it fetch all results (through `Cursor.find` method) and
+        sends them to callback.
+
         The `spec` argument is a prototype document that all results
-        must match. For example:
+        must match.
 
         :Parameters:
           - `spec` (optional): a SON object specifying elements which
@@ -307,3 +289,102 @@ class Client(object):
             "group", group, read_preference=read_preference)
 
         callback(response)
+
+    def create_index(self, key_or_list, cache_for=300, **kwargs):
+        """Creates an index on this collection.
+
+        Takes either a single key or a list of (key, direction) pairs.
+        The key(s) must be an instance of :class:`basestring`
+        (:class:`str` in python 3), and the directions must be one of
+        (:data:`~pymongo.ASCENDING`, :data:`~pymongo.DESCENDING`,
+        :data:`~pymongo.GEO2D`). Returns the name of the created index.
+
+        All optional index creation paramaters should be passed as
+        keyword arguments to this method. Valid options include:
+        check http://docs.mongodb.org/manual/reference/method/db.collection.ensureIndex/#db.collection.ensureIndex
+        """
+        keys = _index_list(key_or_list)
+        index = {"key": _index_document(keys), "ns": self._collection_name}
+        name = "name" in kwargs and kwargs["name"] or helpers._gen_index_name(keys)
+        index["name"] = name
+        index.update(kwargs)
+
+        Client(self._database, 'system.indexes').insert(index, check_keys=False)
+        self._database._cache_index(self._collection, name, cache_for)
+
+        return name
+
+    def ensure_index(self, key_or_list, cache_for=300, **kwargs):
+        """Ensures that an index exists on this collection.
+
+        Unlike :meth:`create_index`, which attempts to create an index
+        unconditionally, :meth:`ensure_index` takes advantage of some
+        caching within the driver such that it only attempts to create
+        indexes that might not already exist. When an index is created
+        (or ensured) by PyMongo it is "remembered" for `cache_for`
+        seconds. Repeated calls to :meth:`ensure_index` within that
+        time limit will be lightweight - they will not attempt to
+        actually create the index.
+
+        Care must be taken when the database is being accessed through
+        multiple Database objects at once. If an index is created and
+        then deleted using another database object any call to
+        :meth:`ensure_index` within the cache window will fail to
+        re-create the missing index.
+
+        .. seealso:: :meth:`create_index`
+        """
+        if "name" in kwargs:
+            name = kwargs["name"]
+        else:
+            keys = _index_list(key_or_list)
+            name = kwargs["name"] = helpers._gen_index_name(keys)
+
+        if not self._database._cached(self._collection, name):
+            return self.create_index(key_or_list, cache_for, **kwargs)
+
+    def drop_indexes(self):
+        """Drops all indexes on this collection.
+
+        Can be used on non-existant collections or collections with no indexes.
+        Raises OperationFailure on an error.
+        """
+        self._database._purge_index()
+        self.drop_index(u"*")
+
+    def drop_index(self, name):
+        """Drops the specified index on this collection.
+
+        Can be used on non-existant collections or collections with no
+        indexes.  Raises OperationFailure on an error. `name`
+        can be either an index name (as returned by `create_index`),
+        or an index specifier (as passed to `create_index`). An index
+        specifier should be a list of (key, direction) pairs. Raises
+        TypeError if index is not an instance of (str, unicode, list).
+
+        .. warning::
+
+          if a custom name was used on index creation (by
+          passing the `name` parameter to :meth:`create_index` or
+          :meth:`ensure_index`) the index **must** be dropped by name.
+
+        :Parameters:
+          - `name`: index (or name of index) to drop
+        """
+        if isinstance(name, list):
+            name = helpers._gen_index_name(name)
+        if not isinstance(name, basestring):
+            raise TypeError("index_or_name must be an index name or list")
+
+        self._database._purge_index(self._collection, name)
+        self._database.command("dropIndexes", self._collection, index=name,
+                                allowable_errors=["ns not found"])
+
+    def reindex(self):
+        """Rebuilds all indexes on this collection.
+
+        .. warning:: reindex blocks all other operations (indexes
+           are built in the foreground) and will be slow for large
+           collections.
+        """
+        return self._database.command("reIndex", self._collection)

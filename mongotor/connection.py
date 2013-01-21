@@ -85,7 +85,8 @@ class Connection(object):
             response = self.__check_response_to_last_error(response)
 
         #logger.debug('response: %s' % response)
-        callback((response, None))
+        if callback is not None:
+            callback((response, None))
 
     def __check_response_to_last_error(self, response):
         """Check a response to a lastError message for errors.
@@ -164,7 +165,7 @@ class Connection(object):
             self.close()
             raise
 
-    def send_message(self, message, with_last_error=False, callback=None):
+    def send_message(self, message, with_last_error=False, receive=False, callback=None):
         """Say something to Mongo.
 
         Raises ConnectionFailure if the message cannot be sent. Raises
@@ -187,56 +188,21 @@ class Connection(object):
             else:
                 raise InterfaceError('connection is closed and autoreconnect is false')
 
-        self._callback = stack_context.wrap(callback)
         self._check_response = with_last_error
 
         with stack_context.StackContext(self.close_on_error):
-            self.__send_message(message, with_last_error=with_last_error)
+            self.usage += 1
+            self._request_id, message = message
+            self._stream.write(message)
 
-    def __send_message(self, message, with_last_error=False):
-        self.usage += 1
-
-        (self._request_id, message) = message
-
-        self._stream.write(message)
-
-        if with_last_error:
-            self._stream.read_bytes(16, callback=self._parse_header)
-            return
-
-        self.reset()
-        self.release()
-
-        if self._callback:
-            self._callback()
+            if receive or with_last_error:
+                self._callback = stack_context.wrap(callback)
+                self._stream.read_bytes(16, callback=self._parse_header)
+            else:
+                self.reset()
+                self.release()
+                if callback:
+                    callback()
 
     def send_message_with_response(self, message, callback):
-        """Send a message to Mongo and return the response.
-
-        Sends the given message and returns the response.
-
-        :Parameters:
-          - `message`: (request_id, data) pair making up the message to send
-        """
-        if self._callback is not None:
-            raise ProgrammingError('connection already in use')
-
-        if self.closed():
-            if self._autoreconnect:
-                self._connect()
-            else:
-                raise InterfaceError('connection is closed and autoreconnect is false')
-
-        self._callback = stack_context.wrap(callback)
-        self._check_response = False
-
-        with stack_context.StackContext(self.close_on_error):
-            self.__send_message_and_receive(message)
-
-    def __send_message_and_receive(self, message):
-        self.usage += 1
-
-        (self._request_id, message) = message
-
-        self._stream.write(message)
-        self._stream.read_bytes(16, callback=self._parse_header)
+        self.send_message(message, False, True, callback)
